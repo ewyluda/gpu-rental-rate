@@ -225,10 +225,51 @@ class SeleniumScraper:
             print(f"[Selenium] Error fetching page: {e}")
             raise
 
+    def wait_for_chart_tabs(self, timeout: int = 30) -> bool:
+        """
+        Wait for the GPU chart tabs to be loaded and visible.
+
+        The chart is rendered dynamically via JavaScript and may not be present
+        immediately after page load. This method waits for the H100 tab to appear.
+
+        Args:
+            timeout: Maximum seconds to wait for chart to load
+
+        Returns:
+            True if chart tabs are found, False otherwise
+        """
+        try:
+            print("[Selenium] Waiting for chart tabs to load...")
+
+            # First, try to find and scroll to the chart area
+            # The tabs are inside a container with role="tablist"
+            tab_list = WebDriverWait(self.driver, timeout).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "[role='tablist']"))
+            )
+
+            # Scroll the tab list into view to ensure it renders
+            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", tab_list)
+            time.sleep(1)
+
+            # Now wait for the H100 tab specifically to be clickable
+            WebDriverWait(self.driver, timeout).until(
+                EC.element_to_be_clickable((By.ID, "radix-_r_0_-trigger-h100"))
+            )
+
+            print("[Selenium] ✓ Chart tabs are loaded and ready")
+            return True
+
+        except TimeoutException:
+            print(f"[Selenium] Timeout waiting for chart tabs to load after {timeout}s")
+            return False
+        except Exception as e:
+            print(f"[Selenium] Error waiting for chart tabs: {e}")
+            return False
+
     def parse_gpu_rates(self, html_content: str) -> List[Dict]:
         """
         Parse GPU rental rates from HTML content.
-        
+
         This scraper handles the tabbed interface by clicking each GPU tab
         and extracting the price from the active content area.
 
@@ -239,7 +280,7 @@ class SeleniumScraper:
             List of dictionaries containing GPU rate information
         """
         rates = []
-        
+
         # Save HTML for debugging
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         debug_file = f"logs/selenium_page_{timestamp}.html"
@@ -247,57 +288,71 @@ class SeleniumScraper:
             f.write(html_content)
         print(f"[Selenium] Page content saved to {debug_file}")
 
+        # Wait for the chart tabs to be loaded (they're rendered via JavaScript)
+        if not self.wait_for_chart_tabs():
+            print("[Selenium] Chart tabs not found - saving current page for debugging")
+            # Save updated HTML after waiting
+            debug_file2 = f"logs/selenium_page_{timestamp}_after_wait.html"
+            with open(debug_file2, 'w', encoding='utf-8') as f:
+                f.write(self.driver.page_source)
+            print(f"[Selenium] Updated page content saved to {debug_file2}")
+            return rates
+
         # Target GPU models to scrape
         gpu_tabs = ['h100', 'a100', 'b200']
-        
+
         for gpu in gpu_tabs:
             try:
                 print(f"[Selenium] Clicking {gpu.upper()} tab...")
-                
+
                 # Click the GPU tab button
                 tab_button = WebDriverWait(self.driver, 10).until(
                     EC.element_to_be_clickable((By.ID, f"radix-_r_0_-trigger-{gpu}"))
                 )
+
+                # Scroll into view and click
+                self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", tab_button)
+                time.sleep(0.5)
                 tab_button.click()
-                
+
                 # Wait for content to load
                 time.sleep(1)
-                
+
                 # Wait for the content area to be visible
                 content_id = f"radix-_r_0_-content-{gpu}"
                 WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.ID, content_id))
                 )
-                
+
                 # Extract price from the text-5xl paragraph
                 price_element = self.driver.find_element(
-                    By.XPATH, 
+                    By.XPATH,
                     f"//*[@id='{content_id}']//p[contains(@class, 'text-5xl')]"
                 )
                 price_text = price_element.text.strip()
-                
+
                 # Parse the numeric price
                 try:
                     rate_usd_per_hour = float(price_text)
                 except ValueError:
                     print(f"[Selenium] Warning: Could not parse price '{price_text}' for {gpu.upper()}")
                     continue
-                
+
                 rate_data = {
                     'gpu_model': gpu.upper(),
                     'rate_usd_per_hour': rate_usd_per_hour,
                     'timestamp': datetime.now().isoformat(),
                     'source': 'silicon_data',
                 }
-                
+
                 rates.append(rate_data)
                 print(f"[Selenium] ✓ {gpu.upper()}: ${rate_usd_per_hour}/hr")
-                
+
             except TimeoutException:
                 print(f"[Selenium] Timeout waiting for {gpu.upper()} content to load")
             except Exception as e:
                 print(f"[Selenium] Error extracting {gpu.upper()} rate: {e}")
-        
+
         return rates
 
     def scrape(self) -> Dict:
