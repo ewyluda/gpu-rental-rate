@@ -94,24 +94,84 @@ class SeleniumScraper:
         if self.driver:
             self.driver.quit()
 
-    def human_like_scroll(self):
-        """Simulate human-like scrolling behavior."""
+    def dismiss_cookie_banner(self):
+        """
+        Dismiss cookie consent banner by clicking 'Deny' button.
+
+        This handles the Cookiebot consent dialog that blocks interaction
+        with the page until dismissed.
+        """
         try:
-            # Get page height
+            # Look for the "Deny" button in the cookie consent banner
+            # Common selectors for Cookiebot deny button
+            deny_selectors = [
+                (By.XPATH, "//button[contains(text(), 'Deny')]"),
+                (By.XPATH, "//a[contains(text(), 'Deny')]"),
+                (By.CSS_SELECTOR, "button[data-cmp-action='deny']"),
+                (By.CSS_SELECTOR, "#CybotCookiebotDialogBodyButtonDecline"),
+                (By.CSS_SELECTOR, "[data-cookieconsent='decline']"),
+                (By.XPATH, "//button[contains(@class, 'deny')]"),
+            ]
+
+            for selector_type, selector in deny_selectors:
+                try:
+                    deny_button = WebDriverWait(self.driver, 5).until(
+                        EC.element_to_be_clickable((selector_type, selector))
+                    )
+                    deny_button.click()
+                    print("[Selenium] ✓ Cookie banner dismissed (clicked Deny)")
+                    time.sleep(0.5)  # Brief pause after dismissing
+                    return True
+                except TimeoutException:
+                    continue
+                except Exception:
+                    continue
+
+            print("[Selenium] No cookie banner found or already dismissed")
+            return False
+
+        except Exception as e:
+            print(f"[Selenium] Note: Cookie banner handling: {e}")
+            return False
+
+    def human_like_scroll(self):
+        """
+        Simulate human-like scrolling behavior to trigger lazy-loaded content.
+
+        This is important for JavaScript-heavy pages where content is loaded
+        dynamically as the user scrolls into view.
+        """
+        try:
+            # Get initial page height
             page_height = self.driver.execute_script("return document.body.scrollHeight")
+            viewport_height = self.driver.execute_script("return window.innerHeight")
 
-            # Scroll down in chunks
+            print(f"[Selenium] Page height: {page_height}px, Viewport: {viewport_height}px")
+
+            # Scroll down in smaller increments to trigger lazy loading
             scroll_position = 0
-            scroll_increment = page_height // 4
+            scroll_increment = viewport_height // 2  # Half viewport at a time
 
-            for _ in range(3):
+            # First pass: scroll down smoothly to trigger content loading
+            while scroll_position < page_height:
                 scroll_position += scroll_increment
-                self.driver.execute_script(f"window.scrollTo(0, {scroll_position})")
-                time.sleep(random.uniform(0.5, 1.5))
+                self.driver.execute_script(f"window.scrollTo({{top: {scroll_position}, behavior: 'smooth'}})")
+                time.sleep(random.uniform(0.3, 0.7))
 
-            # Scroll back to top
-            self.driver.execute_script("window.scrollTo(0, 0)")
+                # Check if page height increased (more content loaded)
+                new_page_height = self.driver.execute_script("return document.body.scrollHeight")
+                if new_page_height > page_height:
+                    page_height = new_page_height
+
+            # Scroll to absolute bottom to ensure all content is loaded
+            self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight)")
             time.sleep(random.uniform(0.5, 1.0))
+
+            # Scroll back to top slowly
+            self.driver.execute_script("window.scrollTo({top: 0, behavior: 'smooth'})")
+            time.sleep(random.uniform(0.5, 1.0))
+
+            print("[Selenium] ✓ Scrolling complete, lazy content should be loaded")
 
         except Exception as e:
             print(f"[Selenium] Error during scrolling: {e}")
@@ -141,7 +201,10 @@ class SeleniumScraper:
             # Random delay to appear more human
             time.sleep(random.uniform(1, 2))
 
-            # Simulate human behavior
+            # Dismiss cookie consent banner if present (click Deny)
+            self.dismiss_cookie_banner()
+
+            # Simulate human behavior - scroll to trigger lazy-loaded content
             self.human_like_scroll()
 
             # Wait for dynamic content
